@@ -1,6 +1,5 @@
 /********************
 Name: Harsh Patel
-N10425496
 Lab 3
 Banker's Algorithm
 **********************/
