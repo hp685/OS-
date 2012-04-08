@@ -16,7 +16,7 @@ using namespace std;
 
 class Task{
 public:
-  string state; //Ready;Blocked;Computing;Terminated;
+  string state; //Ready;Blocked;Computing;Terminated;Aborted;
   int id;
   int compute_time; 
   int finish_time;
@@ -49,7 +49,7 @@ vector<Data> store[100]; // Structure that stores the input.
 vector<Data>::iterator it;
 vector<bool> finished_fifo,finished_bankers;
 vector<bool> state;//Tracks the state of the system-- for deadlocks.
-queue<int> fifo_Q; 
+deque<int> Q; 
 vector<Task> T; //Vector of type Task. 
 // Need == Max - Allocation
 
@@ -76,23 +76,84 @@ void Task::task_output(){
   
 }
 
-void Deadlock(int tasks, int resource_type){ //Modifies the Available and the resource hold vectors. 
+void Deadlock(int tasks, int resource_type, int counter){ //Modifies the Available and the resource hold vectors. 
   bool flag = false;
-  cout<<"Deadlock Detected! Resolving..."<<endl;
-  for(int i = 0; i < tasks; i++){
-    if(flag)
-      break;
-    if(T[i].state == "Blocked"){
-      T[i].state = "Ready";
-      for(int d = 0; d < resource_type; d++){
-	if(T[i].resource_hold[i] > 0){
-	Available[resource_type] += T[i].resource_hold[i];
-	T[i].resource_hold[i] = 0;
-	flag = true;
+  bool islocked = false;
+  
+    cout<<"Deadlock Detected! Resolving..."<<endl;
+    for(int i = 0; i < tasks; i++){
+      if(flag)
+	break;
+       if(T[i].state == "Blocked"){ //If deadlocked, abort the process. 
+       T[i].state = "Ready";
+      for(int d = 1; d <= resource_type; d++){
+	if(T[i].resource_hold[d] >= 0){
+	  cout<<"Aborting "<<T[i].id<<"..."<<endl;
+	  T[i].state="Aborted";
+	  for(int j = 0; j < Q.size(); j++)
+	    if(Q[j] == T[i].id)
+	      Q.erase(Q.begin() + j);
+	  cout<<"Releasing.. "<<T[i].resource_hold[d]<<endl;
+	  store[i+1].erase(store[i+1].begin(),store[i+1].end()); //Clear all the requests... 
+	  if(T[i].resource_hold[d] > 0){
+	    flag = true;
+	    Available[d] += T[i].resource_hold[d];
+	    T[i].resource_hold[d] = 0;
+	    break;
+	  }
 	}
       }
     }
   }
+}
+
+
+bool Compute(Data current,int counter){
+  bool flag = true;
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+  if(T[current.task_number - 1].state == "Computing"){
+    T[current.task_number - 1].compute_time -= 1;
+    if(T[current.task_number - 1].compute_time == 0)
+      T[current.task_number - 1].state = "Ready";
+    flag = false;
+  }
+  else if(current.activity == "initiate"){
+    //Do Nothing since this is fifo.
+  }
+  else if(current.activity == "request"){
+    // If resources are available grant the request else push into the wait Queue. 
+    if(Available[current.resource_type] >= current.number_requested){
+      Available[current.resource_type] -= current.number_requested;
+      T[current.task_number - 1].resource_hold[current.resource_type] += current.number_requested; //Update Tasks resource hold list.
+    }
+    else{
+      if(T[current.task_number -1].state != "Aborted")
+      Q.push_back(current.task_number); //Push the blocked task onto the queue. 
+      T[current.task_number - 1].state = "Blocked";
+      T[current.task_number - 1].wait_time++;
+      flag = false;
+    }
+  }
+  else if(current.activity =="release"){
+    if(T[current.task_number - 1].state != "Computing")
+      Available[current.resource_type] += current.number_released;
+    T[current.task_number - 1].resource_hold[current.resource_type] -= current.number_released; //Update Tasks resource hold list. 
+  }
+  else if(current.activity == "compute"){
+    //Set the state to computing; Set the clock.
+    if(T[current.task_number - 1].state != "Computing"){
+      T[current.task_number - 1].state = "Computing";
+      T[current.task_number - 1].compute_time = current.number_cycles;
+    }
+  }
+  else if(current.activity == "terminate"){
+    if(T[current.task_number - 1].state != "Computing"){
+      T[current.task_number -1 ].state = "Terminated";
+      T[current.task_number - 1].finish_time = counter - 1;
+    }
+  }
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  return flag;
 }
 
 //Tasks run in parallel. Task state: On Hold/Computing/Terminated/Ready. 
@@ -101,70 +162,48 @@ void Deadlock(int tasks, int resource_type){ //Modifies the Available and the re
 void simulate_fifo(int tasks, int resource_type){ //Simulate the task run.
   bool fifo_finished = false;
   int counter = 0,count = 0;
-  while(!fifo_finished && counter < 10){
-    for(int i = 0; i < tasks; i++){
-      for(it = store[i].begin(); it != store[i].begin() + 1; it++){
-	counter++;
-	it->output();
-	if(T[it->task_number - 1].state == "Computing"){
-	  T[it->task_number - 1].compute_time -= 1;
-	  if(T[it->task_number - 1].compute_time == 0)
-	    T[it->task_number - 1].state = "Ready";
-	}
-	else if(it->activity == "initiate"){
-	  //Do Nothing since this is fifo.
-	}
-	else if(it->activity == "request"){
-	  // If resources are available grant the request else push into the wait Queue. 
-	  if(Available[it->resource_type] > it->number_requested){
-	    Available[it->resource_type] -= it->number_requested;
-	    T[it->task_number - 1].resource_hold[it->resource_type] += it->number_requested; //Update Tasks resource hold list.
-	  }
-	  else{
-	    // Q.push_back(Available[it->task_number]); //Push the blocked task onto the queue. 
-	    T[it->task_number - 1].state = "Blocked";
-	    T[it->task_number - 1].wait_time++;
-	  }
-	}
-	else if(it->activity =="release"){
-	  if(T[it->task_number - 1].state != "Computing")
-	    Available[it->resource_type] += it->number_released;
-	  T[it->task_number - 1].resource_hold[it->resource_type] -= it->number_released; //Update Tasks resource hold list. 
-	}
-	else if(it->activity == "compute"){
-	  //Set the state to computing; Set the clock.
-	  if(T[it->task_number - 1].state != "Computing"){
-	    T[it->task_number - 1].state = "Computing";
-	    T[it->task_number - 1].compute_time = it->number_cycles;
-	  }
-	}
-	else if(it->activity == "terminate"){
-	  if(T[it->task_number - 1].state != "Computing"){
-	    T[it->task_number -1 ].state = "Terminated";
-	    T[it->task_number - 1].finish_time = counter - 1;
-	  }
-	}
+  int k = 0;
+  Data current;
+while(!fifo_finished && counter < 17){
+  counter++;  
+  if(!Q.empty()){
+    int n = Q.front();
+    Q.pop_front();
+
+    if(store[n].size() > 0){
+      current = store[n].front();
+      current.output();                            //DEBUG
+      if(Compute(current,counter))
+	store[n].erase(store[n].begin());
+    }
+  }
+  else{
+    for(int i = 1; i <= tasks; i++){
+      if(store[i].size() > 0){
+	current = store[i].front(); 
+	current.output();
+	if(Compute(current,counter))
+	  store[i].erase(store[i].begin());
       }
     }
+  }
     count = 0;
   for(int i = 0; i < tasks; i++){
-    if(T[i].state == "blocked"){
+    if(T[i].state == "Blocked"||T[i].state=="Aborted"||T[i].state =="Terminated"){
       count++;
     }
   }
   if(count == tasks)
-    Deadlock(tasks,resource_type);
+    Deadlock(tasks,resource_type,counter);
   
   count = 0;
   for(int i = 0; i < tasks; i++){
-    if(T[i].state == "Terminated")
+    if(T[i].state == "Terminated" || T[i].state =="Aborted")
       count++;
   }
   if(count == tasks)
     fifo_finished = true;
-  store[i].erase(0);
-  
-  }
+ }
 }
 
 
@@ -187,7 +226,7 @@ int main()
       run.compute_time = 0;
       run.finish_time = 0;
       run.wait_time = 0;
-      for(int d = 0; d < resource_type; d++){
+      for(int d = 0; d <= resource_type; d++){
 	run.resource_hold.push_back(0);
       }
       T.push_back(run);              
@@ -239,10 +278,6 @@ int main()
 	counter = 0;
       }
     }
-  }
-
-  for(int i = 0; i < tasks; i++){
-    fifo_Q.push(i+1);
   }
   simulate_fifo(tasks,resource_type); //
   for(int i = 0; i < tasks; i++)
