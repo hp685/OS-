@@ -41,6 +41,7 @@ public:
 }; 
 
 //Globals
+vector<int> Collect;
 vector<int> Available; //LENGTH M for M Resources.
 vector<int> Max[1000];
 vector<int> Allocation[1000];
@@ -50,6 +51,7 @@ vector<Data>::iterator it;
 vector<bool> finished_fifo,finished_bankers;
 vector<bool> state;//Tracks the state of the system-- for deadlocks.
 deque<int> Q; 
+vector<bool> visited;
 vector<Task> T; //Vector of type Task. 
 // Need == Max - Allocation
 
@@ -76,36 +78,6 @@ void Task::task_output(){
   
 }
 
-void Deadlock(int tasks, int resource_type, int counter){ //Modifies the Available and the resource hold vectors. 
-  bool flag = false;
-  bool islocked = false;
-  
-    cout<<"Deadlock Detected! Resolving..."<<endl;
-    for(int i = 0; i < tasks; i++){
-      if(flag)
-	break;
-       if(T[i].state == "Blocked"){ //If deadlocked, abort the process. 
-       T[i].state = "Ready";
-      for(int d = 1; d <= resource_type; d++){
-	if(T[i].resource_hold[d] >= 0){
-	  cout<<"Aborting "<<T[i].id<<"..."<<endl;
-	  T[i].state="Aborted";
-	  for(int j = 0; j < Q.size(); j++)
-	    if(Q[j] == T[i].id)
-	      Q.erase(Q.begin() + j);
-	  cout<<"Releasing.. "<<T[i].resource_hold[d]<<endl;
-	  store[i+1].erase(store[i+1].begin(),store[i+1].end()); //Clear all the requests... 
-	  if(T[i].resource_hold[d] > 0){
-	    flag = true;
-	    Available[d] += T[i].resource_hold[d];
-	    T[i].resource_hold[d] = 0;
-	    break;
-	  }
-	}
-      }
-    }
-  }
-}
 
 
 bool Compute(Data current,int counter){
@@ -127,16 +99,16 @@ bool Compute(Data current,int counter){
       T[current.task_number - 1].resource_hold[current.resource_type] += current.number_requested; //Update Tasks resource hold list.
     }
     else{
-      if(T[current.task_number -1].state != "Aborted")
+      if(T[current.task_number -1].state != "Aborted" && T[current.task_number - 1].state != "Terminated")
       Q.push_back(current.task_number); //Push the blocked task onto the queue. 
       T[current.task_number - 1].state = "Blocked";
       T[current.task_number - 1].wait_time++;
       flag = false;
     }
   }
-  else if(current.activity =="release"){
+  else if(current.activity == "release"){
     if(T[current.task_number - 1].state != "Computing")
-      Available[current.resource_type] += current.number_released;
+      Collect[current.resource_type] += current.number_released;
     T[current.task_number - 1].resource_hold[current.resource_type] -= current.number_released; //Update Tasks resource hold list. 
   }
   else if(current.activity == "compute"){
@@ -156,6 +128,35 @@ bool Compute(Data current,int counter){
   return flag;
 }
 
+int Deadlock(int tasks, int resource_type, int counter){
+  bool flag = false;
+  cout<<"Deadlock detected!, Resolving..."<<endl;
+  for(int i = 0; i < tasks; i++){
+    for(int d = 1; d <= resource_type; d++){
+      Available[d] += T[i].resource_hold[d];
+      T[i].state = "Aborted";
+      store[i+1].erase(store[i+1].begin(),store[i+1].end());
+      for(int j = 0; j < Q.size(); j++ )
+	if(Q[j] == T[i].id)
+	  Q.erase(Q.begin() + j);
+      int n = Q.front();
+      Data current = store[n].front();
+      if(Compute(current,counter)){
+	flag = true;
+	store[n].erase(store[n].begin());
+	counter++;
+	break;
+      }
+    }
+    if(flag == true)
+      break;
+  }
+  for(int i = 0; i < tasks; i++)
+    if(T[i].state =="Blocked")
+      T[i].state="Ready";
+  return counter;
+}
+
 //Tasks run in parallel. Task state: On Hold/Computing/Terminated/Ready. 
 //IF a run is successful done set to true. 
 //1 Initiate 2 Initiate 3 Initiate 1 Request 2 Request 3 Request. 1 Release 2 Release 
@@ -164,45 +165,58 @@ void simulate_fifo(int tasks, int resource_type){ //Simulate the task run.
   int counter = 0,count = 0;
   int k = 0;
   Data current;
-while(!fifo_finished && counter < 17){
-  counter++;  
-  if(!Q.empty()){
+while(!fifo_finished && counter < 25){
+  counter++;
+  for(int i = 1; i <= tasks; i++){
+    visited[i] = false;
+  }
+  
+  // cout<<"Q-Size "<<Q.size()<<endl;
+  while(!Q.empty()){
     int n = Q.front();
     Q.pop_front();
-
+    if(visited[n]) 
+      break;
     if(store[n].size() > 0){
+      visited[n] = true;
       current = store[n].front();
       current.output();                            //DEBUG
-      if(Compute(current,counter))
+      if(Compute(current,counter)) 
 	store[n].erase(store[n].begin());
+     
     }
   }
-  else{
-    for(int i = 1; i <= tasks; i++){
-      if(store[i].size() > 0){
+  for(int i = 1; i <= tasks; i++){
+      if(store[i].size() > 0 && visited[i] == false){
 	current = store[i].front(); 
 	current.output();
 	if(Compute(current,counter))
 	  store[i].erase(store[i].begin());
-      }
+	visited[i] = true;
     }
   }
-    count = 0;
+  for(int i = 1; i <=resource_type; i++){
+      Available[i] += Collect[i];
+      Collect[i] = 0;
+    }
+ 
+      count = 0;
+  for(int i = 0; i < tasks; i++){
+    if(T[i].state == "Terminated" || T[i].state =="Aborted")
+      count++;
+  }
+  if(count == tasks){
+    fifo_finished = true;
+    break;
+  }
+   count = 0;
   for(int i = 0; i < tasks; i++){
     if(T[i].state == "Blocked"||T[i].state=="Aborted"||T[i].state =="Terminated"){
       count++;
     }
   }
   if(count == tasks)
-    Deadlock(tasks,resource_type,counter);
-  
-  count = 0;
-  for(int i = 0; i < tasks; i++){
-    if(T[i].state == "Terminated" || T[i].state =="Aborted")
-      count++;
-  }
-  if(count == tasks)
-    fifo_finished = true;
+   counter =  Deadlock(tasks,resource_type,counter);
  }
 }
 
@@ -218,8 +232,8 @@ int main()
   Data current;
   Task run;
   while(cin>>tasks>>resource_type){
-    
     Available.push_back(0);
+    Collect.push_back(0);
     for(int i = 0; i < tasks; i++){ //Initialize each Task.
       run.id = i+1;
       run.state ="Ready";
@@ -234,6 +248,7 @@ int main()
     for(int i = 0; i < resource_type; i++){
       cin>>units;
       Available.push_back(units);
+      Collect.push_back(0);
     }
     cout<<tasks<<" "<<resource_type<<" ";
     for(int i = 0; i <= resource_type; i++)
@@ -268,7 +283,6 @@ int main()
  	//Process
 	current.set_values(activity,0,0,number_cycles,task_number,0,0,counter,false,0);
 	store[task_number].push_back(current);
-
       }
       else if(activity == "terminate"){
 	cin>>task_number;
@@ -279,6 +293,9 @@ int main()
       }
     }
   }
+
+  for(int i = 0; i <= tasks; i++)
+    visited.push_back(false);
   simulate_fifo(tasks,resource_type); //
   for(int i = 0; i < tasks; i++)
     T[i].task_output();
